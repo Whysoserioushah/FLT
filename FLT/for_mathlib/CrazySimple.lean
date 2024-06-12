@@ -4,6 +4,7 @@ import FLT.for_mathlib.Con
 import Mathlib.Algebra.Quaternion
 import Mathlib.Algebra.Ring.Equiv
 import Mathlib.LinearAlgebra.Matrix.IsDiag
+import Mathlib.Algebra.Module.Submodule.Pointwise
 
 variable (A : Type*) [Ring A]
 
@@ -30,6 +31,265 @@ def RingCon.mapMatrix (I : RingCon A) : RingCon M[ι, A] where
     simpa only [Matrix.mul_apply] using I.sum fun k _ ↦ I.mul (h _ _) (h' _ _)
   add' {X X' Y Y'} h h' := fun i j ↦ by
     simpa only [Matrix.add_apply] using I.add (h _ _) (h' _ _)
+
+instance (M : Type*) [AddCommGroup M] [Module A M] : Module M[ι, A] (ι → M) where
+  smul N v i := ∑ j : ι, N i j • v j
+  one_smul v := funext fun i => show ∑ _, _ = _ by simp [one_apply]
+  mul_smul N₁ N₂ v := funext fun i => show ∑ _, _ = ∑ _, _ • (∑ _, _) by
+    simp_rw [mul_apply, Finset.smul_sum, Finset.sum_smul, MulAction.mul_smul]
+    rw [Finset.sum_comm]
+  smul_zero v := funext fun i => show ∑ _, _ = _ by simp
+  smul_add N v₁ v₂ := funext fun i => show ∑ _, _ = (∑ _, _) + (∑ _, _) by
+    simp [Finset.sum_add_distrib]
+  add_smul N₁ N₂ v := funext fun i => show ∑ _, _ = (∑ _, _) + (∑ _, _) by
+    simp [add_smul, Finset.sum_add_distrib]
+  zero_smul v := funext fun i => show ∑ _, _ = _ by simp
+
+-- bad name
+@[simps]
+def LinearMap.equivMatrix [Inhabited ι] {M N : Type*} [AddCommGroup M] [Module A M] [AddCommGroup N] [Module A N] :
+    (M →ₗ[A] N) ≃ ((ι → M) →ₗ[M[ι, A]] (ι → N)) where
+  toFun f :=
+  { toFun := fun v i => f $ v i
+    map_add' := by intros; ext; simp
+    map_smul' := by
+      intros m v
+      simp only [RingHom.id_apply]
+      ext i
+      change f (∑ _, _) = ∑ _, _
+      simp }
+  invFun f :=
+  { toFun := fun x => f (Function.update (0 : ι → M) default x) default
+    map_add' := by
+      intros x y
+      simp only
+      rw [show Function.update (0 : ι → M) default (x + y) =
+        (Function.update (0 : ι → M) default x) + (Function.update (0 : ι → M) default y) by
+        rw [← Function.update_add, zero_add], map_add]
+      rfl
+    map_smul' := by
+      intros a x
+      simp only [RingHom.id_apply]
+      rw [show Function.update (0 : ι → M) default (a • x) =
+        a • Function.update (0 : ι → M) default x by
+        rw [← Function.update_smul, smul_zero]]
+      rw [show (a • Function.update (0 : ι → M) default x : ι → M) =
+        (diagonal fun _ => a : M[ι, A]) • (Function.update (0 : ι → M) default x : ι → M) by
+        ext i; change _ = ∑ _, _; simp [diagonal], f.map_smul,
+        show a • f (Function.update (0 : ι → M) default x) default =
+        ((diagonal fun _ => a : M[ι, A]) • f (Function.update (0 : ι → M) default x)) default by
+        change _ = ∑ _, _; simp [diagonal]] }
+  left_inv f := LinearMap.ext fun x => by simp
+  right_inv f := by
+    ext v i
+    simp only [coe_mk, AddHom.coe_mk]
+    rw [show (Function.update 0 default (v i) : ι → M) = (stdBasisMatrix default i 1 : M[ι, A]) • v by
+      ext j
+      change _ = ∑ _, _
+      simp only [Function.update, eq_rec_constant, Pi.zero_apply, dite_eq_ite, stdBasisMatrix,
+        ite_smul, one_smul, zero_smul]
+      split_ifs with h
+      · subst h; simp
+      · exact Eq.symm $ Finset.sum_eq_zero fun i _ => if_neg (by tauto), f.map_smul]
+    change ∑ _, _ = _
+    simp [stdBasisMatrix]
+
+-- is this what we want?
+-- https://planetmath.org/moritaequivalence I think this is what we want
+@[simps]
+def α [Inhabited ι] (M : Type*) [AddCommGroup M] [Module M[ι, A] M] : AddSubgroup M where
+  carrier := Set.range ((stdBasisMatrix (default : ι) (default : ι) (1 : A) : M[ι, A]) • ·)
+  add_mem' := by
+    rintro _ _ ⟨m, rfl⟩ ⟨n, rfl⟩
+    exact ⟨m + n, by simp⟩
+  zero_mem' := ⟨0, by simp⟩
+  neg_mem' := by
+    rintro _ ⟨m, rfl⟩
+    exact ⟨-m, by simp⟩
+
+instance [Inhabited ι] (M : Type*) [AddCommGroup M] [Module M[ι, A] M] :
+    Module A <| α A ι M where
+  smul a x := ⟨(stdBasisMatrix default default a : M[ι, A]) • x.1, by
+    obtain ⟨y, hy⟩ := x.2
+    simp only [α, AddSubgroup.mem_mk, Set.mem_range]
+    refine ⟨(stdBasisMatrix default default a : M[ι, A]) • y, hy ▸ ?_⟩
+    simp only
+    rw [← MulAction.mul_smul, ← MulAction.mul_smul]
+    congr 1
+    ext i j
+    simp⟩
+  one_smul := by
+    rintro ⟨_, ⟨x, rfl⟩⟩
+    ext
+    change stdBasisMatrix _ _ _ • _ = stdBasisMatrix _ _ _ • _
+    rw [← MulAction.mul_smul]
+    congr 1
+    ext i j
+    simp
+  mul_smul := by
+    rintro a a' ⟨_, ⟨x, rfl⟩⟩
+    ext
+    change stdBasisMatrix _ _ _ • _ = stdBasisMatrix _ _ _ • (stdBasisMatrix _ _ _ • _)
+    dsimp only [id_eq, eq_mpr_eq_cast, cast_eq]
+    rw [← MulAction.mul_smul, ← MulAction.mul_smul, ← MulAction.mul_smul]
+    congr 1
+    ext i j
+    simp
+  smul_zero a := by
+    ext
+    change stdBasisMatrix _ _ _ • 0 = 0
+    simp
+  smul_add := by
+    rintro a ⟨_, ⟨x, rfl⟩⟩ ⟨_, ⟨y, rfl⟩⟩
+    ext
+    change stdBasisMatrix _ _ _ • _ = stdBasisMatrix _ _ _ • _ + stdBasisMatrix _ _ _ • _
+    dsimp only [AddSubmonoid.coe_add, AddSubgroup.coe_toAddSubmonoid, α_coe]
+    rw [← MulAction.mul_smul, ← MulAction.mul_smul, ← smul_add, ← smul_add,
+      ← MulAction.mul_smul]
+  add_smul := by
+    rintro a b ⟨_, ⟨x, rfl⟩⟩
+    ext
+    change stdBasisMatrix _ _ _ • _ = stdBasisMatrix _ _ _ • _ + stdBasisMatrix _ _ _ • _
+    dsimp only
+    rw [← MulAction.mul_smul, ← MulAction.mul_smul, ← MulAction.mul_smul, ← add_smul,
+      ← add_mul, ← stdBasisMatrix_add]
+  zero_smul := by
+    rintro ⟨_, ⟨x, rfl⟩⟩
+    ext
+    change stdBasisMatrix _ _ _ • _ = _
+    simp only [stdBasisMatrix_zero, zero_smul, ZeroMemClass.coe_zero]
+
+example : true := rfl
+
+-- adjoint functor
+def LinearMap.homEquivMatrix [Inhabited ι]
+    (M N : Type*) [AddCommGroup M] [Module A M] [AddCommGroup N] [Module M[ι, A] N] :
+    (M →ₗ[A] α A ι N) ≃
+    ((ι → M) →ₗ[M[ι, A]] N) where
+  toFun f :=
+  { toFun := fun v => f $ ∑ i : ι, v i
+    map_add' := fun _ _ => by
+      simp only [α_coe, Pi.add_apply, map_sum, map_add, AddSubgroup.val_finset_sum,
+        AddSubmonoid.coe_add, AddSubgroup.coe_toAddSubmonoid]
+      rw [← Finset.sum_add_distrib]
+    map_smul' := by
+      intros x v
+      simp only [α_coe, map_sum, AddSubgroup.val_finset_sum, RingHom.id_apply, Finset.smul_sum]
+      refine Finset.sum_congr rfl fun i _ => ?_
+      change (f (∑ _, _) : N) = _
+      simp only [α_coe, map_sum, LinearMapClass.map_smul, AddSubgroup.val_finset_sum]
+      change ∑ _, stdBasisMatrix _ _ _ • _ = _
+
+      -- simp only [α_coe, map_sum, LinearMapClass.map_smul, AddSubgroup.val_finset_sum]
+      have (m : M) : ∃ x, (f m : N) = (stdBasisMatrix default default 1 : M[ι, A]) • x := by
+        obtain ⟨x, hx⟩ := (f m).2
+        rw [← hx]; simp
+      choose y hy using this
+      change ∑ i : ι, stdBasisMatrix _ _ _ • _ = _
+      simp_rw [hy, ← MulAction.mul_smul]
+      simp only [StdBasisMatrix.mul_same, mul_one]
+      -- simp? [stdBasisMatrix]
+      sorry }
+  invFun := _
+  left_inv := _
+  right_inv := _
+
+-- This should be similar to `matrix_iff'`, but I just don't know how to prove it.
+lemma IsSimpleModule.matrix_iff [Inhabited ι] (M : Type*) [AddCommGroup M] [Module M[ι, A] M] :
+    IsSimpleModule M[ι, A] M ↔ IsSimpleModule A (α A ι M) := by
+
+  constructor
+  · intro inst1
+    have : Nontrivial (Submodule A (α A ι M)) := by
+      -- In particular, this is to prove `α A ι M ≠ ⊥`, i.e. `e₁₁ x ≠ 0` for some `0`.
+      -- I don't know how to prove it.
+      sorry
+    refine ⟨fun x => ?_⟩
+    sorry
+  · sorry
+
+lemma IsSimpleModule.matrix_iff' [Inhabited ι] (M : Type*) [AddCommGroup M] [Module A M] :
+    IsSimpleModule M[ι, A] (ι → M) ↔ IsSimpleModule A M := by
+  constructor
+  · intro inst1
+    have : Nontrivial (Submodule A M) := by
+      refine ⟨⊥, ⊤, fun rid => bot_ne_top (α := Submodule M[ι, A] (ι → M)) $ eq_top_iff.2
+        fun x _ => funext fun j => show x j ∈ (⊥ : Submodule A M) from rid ▸ ⟨⟩⟩
+    refine ⟨fun x => ?_⟩
+    obtain (h|h) := inst1.2
+      (Submodule.span _ (⋃ (i : ι) (m ∈ x), {Function.update (0 : ι → M) i m}))
+    · refine Or.inl $ eq_bot_iff.2 fun a ha => ?_
+      simp_rw [Submodule.span_iUnion₂, iSup_eq_bot, Submodule.span_iUnion, iSup_eq_bot,
+        Submodule.span_singleton_eq_bot] at h
+      simpa using congr_fun (h default a ha) (default : ι)
+    · refine Or.inr $ eq_top_iff.2 fun a _ => ?_
+      have mem : Function.update (0 : ι → M) default a ∈ (⊤ : Submodule M[ι, A] _) := ⟨⟩
+      rw [← h, mem_span_set] at mem
+      obtain ⟨c, hc1, eq⟩ := mem
+      have eq' := congr_fun eq default
+      simp only [Finsupp.sum, Finset.sum_apply, Function.update_same] at eq'
+      rw [← eq']
+      refine x.sum_mem fun j hj => ?_
+      specialize hc1 hj
+      simp only [Set.mem_iUnion, Set.mem_singleton_iff, exists_prop] at hc1
+      obtain ⟨i, j, hj', rfl⟩ := hc1
+      change ∑ _, _ ∈ x
+      refine x.sum_mem fun k _ => x.smul_mem _ ?_
+      simp only [Function.update, eq_rec_constant, Pi.zero_apply, dite_eq_ite]
+      split_ifs <;> aesop
+  · intro inst1
+    have : Nontrivial (Submodule M[ι, A] (ι → M)) := by
+      refine ⟨⊥, ⊤, fun rid => bot_ne_top (α := Submodule A M) $ eq_top_iff.2 fun x _ => ?_⟩
+      have : Function.update (0 : ι → M) default x ∈ (⊤ : Submodule M[ι, A] (ι → M)) := ⟨⟩
+      rw [← rid] at this
+      have := congr_fun this default
+      simpa using this
+    refine ⟨fun x => ?_⟩
+    obtain (h|h) := inst1.2 (Submodule.span A (⋃ (f ∈ x), {f default}))
+    · refine Or.inl $ eq_bot_iff.2 fun a ha => funext fun i => show a i = 0 from ?_ -- eq_bot_iff.1 h $
+      have : ((stdBasisMatrix default i 1 : M[ι, A]) • a) default = a i := by
+        change ∑ _, _ = _
+        simp [stdBasisMatrix, Finset.sum_ite]
+      rw [← this]
+      change _ ∈ (⊥ : Submodule A M)
+      rw [← h]
+      refine Submodule.subset_span ?_
+      simp only [Set.mem_iUnion, Set.mem_singleton_iff, exists_prop]
+      exact ⟨_, x.smul_mem _ ha, rfl⟩
+    · refine Or.inr $ eq_top_iff.2 fun a _ => ?_
+      have eq1 : a = ∑ i : ι, Function.update (0 : ι → M) i (a i) := by
+        ext j
+        rw [Finset.sum_apply]
+        simp [Function.update]
+      rw [eq1]
+      refine x.sum_mem fun i _ => ?_
+      have mem : (a i) ∈ (⊤ : Submodule A M) := ⟨⟩
+      rw [← h, mem_span_set] at mem
+      obtain ⟨c, hc1, eq⟩ := mem
+      rw [Finsupp.sum] at eq
+      rw [show Function.update (0  : ι → M) i (a i) =
+        ∑ x ∈ c.support, Function.update (0 : ι → M) i (c x • x) by
+        ext j; simp [Function.update, eq]]
+      refine x.sum_mem fun j hj => ?_
+      specialize hc1 hj
+      simp only [Set.mem_iUnion, Set.mem_singleton_iff, exists_prop] at hc1
+      obtain ⟨f, hf, rfl⟩ := hc1
+      rw [show Function.update (0 : ι → M) i (c (f default) • f default) =
+        (stdBasisMatrix i default (c (f default)) : M[ι, A]) • f  by
+        ext j
+        change _ = ∑ _, _
+        simp only [Function.update, eq_rec_constant, Pi.zero_apply, dite_eq_ite, stdBasisMatrix,
+          ite_smul, zero_smul]
+        split_ifs with h1
+        · subst h1
+          simp
+        · symm
+          apply Finset.sum_eq_zero
+          intros
+          rw [if_neg]
+          tauto]
+      refine x.smul_mem _ hf
+
 
 @[simp] lemma RingCon.mem_mapMatrix (I : RingCon A) (x) : x ∈ I.mapMatrix ι ↔ ∀ i j, x i j ∈ I :=
   Iff.rfl
@@ -502,6 +762,86 @@ theorem Wedderburn_Artin'
   obtain ⟨n, hn, I, inst, e⟩ := Wedderburn_Artin A
   exact ⟨n, hn, (Module.End A I)ᵐᵒᵖ, inferInstance, e⟩
 
+-- This is a lemma on purpose, **don't** attempt to look at its definition
+lemma division_ring_exists_unique_isSimpleModule
+    (S : Type u) [DivisionRing S] (N : Type*) [AddCommGroup N] [Module S N] [IsSimpleModule S N] :
+    Nonempty (N ≃ₗ[S] S) := by
+  have inst4 := IsSimpleModule.nontrivial S N
+  have H := Module.Free.of_divisionRing S N
+  rw [Module.free_iff_set] at H
+  obtain ⟨s, ⟨b⟩⟩ := H
+  if hs1 : s = ∅
+  then
+    subst hs1
+    have := b.index_nonempty
+    simp only [nonempty_subtype, Set.mem_empty_iff_false, exists_const] at this
+  else
+    obtain ⟨i, hi⟩ := Set.nonempty_iff_ne_empty.mpr hs1
+    have eq0 := IsSimpleOrder.eq_bot_or_eq_top (Submodule.span S {b ⟨i, hi⟩}) |>.resolve_left (by
+      intro h
+      simp only [Submodule.span_singleton_eq_bot] at h
+      exact b.ne_zero ⟨i, hi⟩ h)
+    have eq : s = {i} := by
+      refine le_antisymm ?_ (by simpa)
+      simp only [Set.le_eq_subset, Set.subset_singleton_iff]
+      intro j hj
+      have mem : b ⟨j, hj⟩ ∈ Submodule.span S {b ⟨i, hi⟩} := eq0 ▸ ⟨⟩
+      rw [Submodule.mem_span_singleton] at mem
+      obtain ⟨r, hr⟩ := mem
+      have hr' := congr(b.repr $hr)
+      simp only [LinearMapClass.map_smul, Basis.repr_self, Finsupp.smul_single, smul_eq_mul,
+        mul_one] at hr'
+      by_contra rid
+      have hr' := congr($hr' ⟨i, hi⟩)
+      rw [Finsupp.single_eq_same, Finsupp.single_eq_of_ne (h := by simpa)] at hr'
+      subst hr'
+      simp only [zero_smul] at hr
+      exact b.ne_zero _ hr.symm |>.elim
+
+    subst eq
+    refine ⟨b.repr ≪≫ₗ LinearEquiv.ofBijective ⟨⟨fun x => x ⟨i, by simp⟩, ?_⟩, ?_⟩ ⟨?_, ?_⟩⟩
+    · intro x y; simp
+    · intro x y; simp
+    · intro x y hxy; ext; simpa using hxy
+    · intro x; exact ⟨Finsupp.single ⟨i, by simp⟩ x, by simp⟩
+
+lemma matrix_division_ring_exists_unique_isSimpleModule
+    (ι : Type*) [Inhabited ι] [Fintype ι] [DecidableEq ι]
+    (S : Type u) [DivisionRing S]
+    (N : Type*) [AddCommGroup N] [Module M[ι, S] N] [IsSimpleModule M[ι, S] N] :
+    Nonempty (N ≃ₗ[M[ι, S]] (ι → S)) := by
+  haveI := IsSimpleModule.matrix_iff S ι N |>.mp inferInstance
+  have := division_ring_exists_unique_isSimpleModule S (α S ι N)
+  sorry
+
+universe u'
+
+lemma Module.compHom_isSimpleModule
+    (A B : Type*) [Ring A] [Ring B] (e : B ≃+* A)
+    (M : Type u) [AddCommGroup M] [Module A M] [IsSimpleModule A M] :
+    @IsSimpleModule B _ M _ (Module.compHom M e.toRingHom) := by
+  sorry
+
+lemma exists_unique_isSimpleModule
+    (A : Type u) [Ring A] [IsArtinianRing A] [simple : IsSimpleOrder (RingCon A)] :
+    ∃ (M : Type u) (_ : AddCommGroup M) (_ : Module A M), IsSimpleModule A M ∧
+      ∀ (N : Type u') (_ : AddCommGroup N) (_ : Module A N) (_ : IsSimpleModule A N),
+        Nonempty (M ≃ₗ[A] N) := by
+  obtain ⟨n, hn, S, inst1, ⟨e⟩⟩ := Wedderburn_Artin' A
+  have : Inhabited (Fin n) := ⟨⟨0, by omega⟩⟩
+  have : IsSimpleModule M[Fin n, S] (Fin n → S) := by
+    rw [IsSimpleModule.matrix_iff']; infer_instance
+  letI : Module A (Fin n → S) := Module.compHom (Fin n → S) e.toRingHom
+  refine ⟨Fin n → S, inferInstance, inferInstance, ?_, ?_⟩
+  · apply Module.compHom_isSimpleModule
+  · intro N inst2 inst3 inst4
+    refine ⟨?_⟩
+    letI : Module M[Fin n, S] N := Module.compHom N e.symm.toRingHom
+    haveI : IsSimpleModule M[Fin n, S] N := Module.compHom_isSimpleModule _ _ _ _
+    have := matrix_division_ring_exists_unique_isSimpleModule (Fin n) S N
+    sorry
+  -- sorry
+
 end simple_ring
 
 universe u v w
@@ -684,7 +1024,7 @@ theorem is_fin_dim_of_wdb
   apply_fun (· ⟨0, by omega⟩ ⟨0, by omega⟩) at hr
   simp only [sum_apply, smul_apply, diagonal_apply_eq] at hr
   exact hr ▸ Submodule.sum_mem _ fun i hi =>
-    Submodule.smul_mem _ _ $ Submodule.subset_span $ by simpa using ⟨i, hi, rfl⟩
+    Submodule.smul_mem _ _ Submodule.subsetspan Submodule.subset_span  by simpa using ⟨i, hi, rfl⟩
 
 lemma bijective_algebraMap_of_finiteDimensional_divisionRing_over_algClosed
     (K D : Type*) [Field K] [IsAlgClosed K] [DivisionRing D] [alg : Algebra K D]
@@ -699,7 +1039,7 @@ theorem simple_eq_matrix_algClosed [IsAlgClosed K] [IsSimpleOrder (RingCon B)] :
   rcases Wedderburn_Artin_algebra_version K B with ⟨n, hn, S, ins1, ins2, ⟨e⟩⟩
   have := is_fin_dim_of_wdb K B n S (by omega) e
 
-  exact ⟨n, hn, ⟨e.trans $ AlgEquiv.mapMatrix $ AlgEquiv.symm $
+  exact ⟨n, hn, ⟨e.trans AlgEquiv.mapMatrix AlgEquiv.mapMatrix  AlgEquiv.symm $
     AlgEquiv.ofBijective (Algebra.ofId _ _) $
       bijective_algebraMap_of_finiteDimensional_divisionRing_over_algClosed _ _⟩⟩
 
